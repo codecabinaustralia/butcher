@@ -15,26 +15,29 @@ def get_chicken_cuts():
 # --- New calculation logic (normalized yield model) ---
 def wholesale_to_retail_custom_markups(wholesale_per_kg: float, markups: dict):
     cuts = get_chicken_cuts()
-    total_yield = sum(c["percent"] for c in cuts)
-    avg_yield = total_yield / len(cuts)  # average % per cut
-    retail_data = []
-
+    # convert markups % -> multiplier (1.5 for 50%)
     for c in cuts:
-        cut_name = c["cut"]
+        c["markup_factor"] = 1 + (markups.get(c["cut"], 0) / 100)
+
+    # compute weighted average factor so we can normalize around the whole bird
+    total_weight = sum(c["percent"] for c in cuts)
+    weighted_avg_factor = sum((c["percent"] / total_weight) * c["markup_factor"] for c in cuts)
+
+    retail_data = []
+    for c in cuts:
         yield_pct = c["percent"]
-        markup = markups.get(cut_name, 0)
-
-        # Normalized yield adjustment (prevents tiny cuts from blowing out)
-        retail_price = wholesale_per_kg * (1 + markup / 100) * (avg_yield / yield_pct)
-
+        markup_factor = c["markup_factor"]
+        # normalize so overall average = 1× wholesale
+        normalized_factor = markup_factor / weighted_avg_factor
+        retail_price = wholesale_per_kg * normalized_factor
         retail_data.append({
-            "cut": cut_name,
+            "cut": c["cut"],
             "yield_%": yield_pct,
-            "markup_%": markup,
-            "retail_price_per_kg": round(retail_price, 2),
+            "markup_%": markups.get(c["cut"], 0),
+            "retail_price_per_kg": round(retail_price, 2)
         })
 
-    # Whole chicken retail = weighted average of markups
+    # whole chicken retail (weighted avg markup)
     avg_markup = sum(markups.values()) / len(markups) if markups else 0
     whole_retail = round(wholesale_per_kg * (1 + avg_markup / 100), 2)
 
