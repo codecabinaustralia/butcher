@@ -15,34 +15,31 @@ def get_chicken_cuts():
 # --- New calculation logic (normalized yield model) ---
 def wholesale_to_retail_custom_markups(wholesale_per_kg: float, markups: dict):
     cuts = get_chicken_cuts()
-    # convert markups % -> multiplier (1.5 for 50%)
-    for c in cuts:
-        c["markup_factor"] = 1 + (markups.get(c["cut"], 0) / 100)
-
-    # compute weighted average factor so we can normalize around the whole bird
-    total_weight = sum(c["percent"] for c in cuts)
-    weighted_avg_factor = sum((c["percent"] / total_weight) * c["markup_factor"] for c in cuts)
-
+    total_yield = sum(c["percent"] for c in cuts)
+    avg_yield = total_yield / len(cuts)
     retail_data = []
+
     for c in cuts:
+        cut_name = c["cut"]
         yield_pct = c["percent"]
-        markup_factor = c["markup_factor"]
-        # normalize so overall average = 1× wholesale
-        normalized_factor = markup_factor / weighted_avg_factor
-        retail_price = wholesale_per_kg * normalized_factor
+        markup = markups.get(cut_name, 0)
+
+        # Smooth yield factor: small cuts get modest bump, capped at 3×
+        yield_adjustment = min((avg_yield / yield_pct) ** 0.5, 3)
+
+        retail_price = wholesale_per_kg * (1 + markup / 100) * yield_adjustment
+
         retail_data.append({
-            "cut": c["cut"],
+            "cut": cut_name,
             "yield_%": yield_pct,
-            "markup_%": markups.get(c["cut"], 0),
+            "markup_%": markup,
             "retail_price_per_kg": round(retail_price, 2)
         })
 
-    # whole chicken retail (weighted avg markup)
     avg_markup = sum(markups.values()) / len(markups) if markups else 0
     whole_retail = round(wholesale_per_kg * (1 + avg_markup / 100), 2)
 
     return retail_data, whole_retail
-
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Chicken Retail Calculator", page_icon="🐔", layout="centered")
