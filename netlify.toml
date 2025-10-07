@@ -1,6 +1,6 @@
 [build]
+  command = "streamlit run app.py --server.port=8501 --server.address=0.0.0.0"
   publish = "streamlit"
-  command = "streamlit run app.py --server.port=$PORT --server.address=0.0.0.0"
 
 [build.environment]
   NODE_VERSION = "20.10.0"
