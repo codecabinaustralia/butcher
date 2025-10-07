@@ -1,8 +1,11 @@
 import streamlit as st
+import pandas as pd
 
-# --- Chicken cuts data ---
-def get_chicken_cuts():
-    return [
+# ==========================================================
+# 🔹 Base cut data for each species
+# ==========================================================
+DEFAULT_CUTS = {
+    "chicken": [
         {"cut": "breast (both, bone-in)", "percent": 28},
         {"cut": "thigh (bone-in)", "percent": 18},
         {"cut": "drumstick", "percent": 12},
@@ -10,15 +13,45 @@ def get_chicken_cuts():
         {"cut": "tenders", "percent": 2.5},
         {"cut": "back/frames/neck", "percent": 14},
         {"cut": "giblets", "percent": 1.5},
-    ]
+    ],
+    "cow": [
+        {"cut": "ribeye", "percent": 8},
+        {"cut": "sirloin", "percent": 10},
+        {"cut": "rump", "percent": 7},
+        {"cut": "brisket", "percent": 6},
+        {"cut": "chuck", "percent": 14},
+        {"cut": "round", "percent": 15},
+        {"cut": "shank", "percent": 8},
+        {"cut": "trim/offcuts", "percent": 32},
+    ],
+    "lamb": [
+        {"cut": "leg", "percent": 30},
+        {"cut": "shoulder", "percent": 20},
+        {"cut": "loin", "percent": 15},
+        {"cut": "rack", "percent": 8},
+        {"cut": "shank", "percent": 5},
+        {"cut": "neck", "percent": 5},
+        {"cut": "trim/offcuts", "percent": 17},
+    ],
+    "pig": [
+        {"cut": "loin", "percent": 20},
+        {"cut": "belly", "percent": 16},
+        {"cut": "shoulder (butt)", "percent": 18},
+        {"cut": "ham", "percent": 22},
+        {"cut": "spare ribs", "percent": 8},
+        {"cut": "hock", "percent": 6},
+        {"cut": "trim/offcuts", "percent": 10},
+    ],
+}
 
 
-# --- Core logic: yield-weighted realistic model ---
-def wholesale_to_retail_custom_markups(wholesale_per_kg: float, markups: dict, bird_weight_kg: float):
-    cuts = get_chicken_cuts()
+# ==========================================================
+# 🔹 Calculation Logic
+# ==========================================================
+def calculate_cut_prices(wholesale_per_kg, markups, weight_kg, cuts):
     total_yield = sum(c["percent"] for c in cuts)
     avg_yield = total_yield / len(cuts)
-    retail_data = []
+    results = []
     total_value = 0
 
     for c in cuts:
@@ -26,20 +59,15 @@ def wholesale_to_retail_custom_markups(wholesale_per_kg: float, markups: dict, b
         yield_pct = c["percent"]
         markup = markups.get(cut_name, 0)
 
-        # Smooth yield adjustment (small cuts get modest bump, capped at 3×)
+        # Smooth adjustment: small cuts slightly higher, capped at 3x
         yield_adjustment = min((avg_yield / yield_pct) ** 0.5, 3)
 
-        # Retail price per kg for this cut
         retail_price = wholesale_per_kg * (1 + markup / 100) * yield_adjustment
-
-        # Cut weight (based on bird weight)
-        cut_weight = bird_weight_kg * (yield_pct / 100)
-
-        # Total retail value for this cut
+        cut_weight = weight_kg * (yield_pct / 100)
         cut_value = cut_weight * retail_price
         total_value += cut_value
 
-        retail_data.append({
+        results.append({
             "cut": cut_name,
             "yield_%": yield_pct,
             "markup_%": markup,
@@ -50,37 +78,77 @@ def wholesale_to_retail_custom_markups(wholesale_per_kg: float, markups: dict, b
 
     avg_markup = sum(markups.values()) / len(markups) if markups else 0
     whole_retail_per_kg = round(wholesale_per_kg * (1 + avg_markup / 100), 2)
-    total_retail_value = round(total_value, 2)
 
-    return retail_data, whole_retail_per_kg, total_retail_value
+    return results, whole_retail_per_kg, round(total_value, 2)
 
 
-# --- Streamlit UI ---
-st.set_page_config(page_title="Chicken Retail Calculator", page_icon="🐔", layout="centered")
-st.title("🐔 Chicken Wholesale → Retail Calculator")
+# ==========================================================
+# 🔹 App Layout
+# ==========================================================
+st.set_page_config(page_title="Butcher Yield Calculator", page_icon="🥩", layout="centered")
 
+st.title("🥩 Multi-Animal Butcher Yield & Retail Calculator")
 st.write("""
-Estimate **realistic retail pricing and yield by cut** based on your wholesale chicken cost.  
-Enter your bird weight and markups to see per-cut weights, retail prices, and total values.
+This tool helps you estimate retail prices per cut for **cow**, **chicken**, **lamb**, or **pig**,  
+based on wholesale cost, animal weight, and per-cut markup.  
+You can also edit cut names and yield % under *Properties* for each species.
 """)
 
-# Inputs
+# ==========================================================
+# 🔹 Animal selector
+# ==========================================================
+st.subheader("Select Animal")
+species_choice = st.radio(
+    "Choose animal:",
+    ["🐔 Chicken", "🐄 Cow", "🐑 Lamb", "🐖 Pig"],
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+if "Chicken" in species_choice:
+    species = "chicken"
+elif "Cow" in species_choice:
+    species = "cow"
+elif "Lamb" in species_choice:
+    species = "lamb"
+elif "Pig" in species_choice:
+    species = "pig"
+
+# ==========================================================
+# 🔹 Editable Cut Properties Section
+# ==========================================================
+st.sidebar.header(f"⚙️ {species.capitalize()} Cut Properties")
+
+st.sidebar.write("Edit cut names and yield percentages below (total should roughly equal 100%).")
+cuts_df = pd.DataFrame(DEFAULT_CUTS[species])
+
+edited_cuts = st.sidebar.data_editor(
+    cuts_df,
+    num_rows="dynamic",
+    key=f"{species}_cuts_editor",
+    hide_index=True
+)
+
+# Convert sidebar edits back into dict
+cuts = edited_cuts.to_dict(orient="records")
+
+# ==========================================================
+# 🔹 Inputs for pricing
+# ==========================================================
 wholesale_price = st.number_input(
-    "Wholesale price per kg of whole chicken ($)",
-    min_value=1.0, max_value=20.0, value=9.85, step=0.05,
+    "Wholesale price per kg ($)",
+    min_value=1.0, max_value=50.0, value=9.85, step=0.05,
 )
 
-bird_weight = st.number_input(
-    "Bird dressed weight (kg)",
-    min_value=0.5, max_value=5.0, value=2.0, step=0.1,
-    help="The total processed chicken weight you are breaking down."
+weight_kg = st.number_input(
+    "Animal dressed weight (kg)",
+    min_value=0.5, max_value=1000.0, value=2.0, step=0.5,
+    help="The dressed carcass weight being broken down."
 )
 
-st.subheader("Set desired markup percentage for each cut")
-
+st.subheader("Set markup percentage per cut")
 markups = {}
 cols = st.columns(2)
-cuts = get_chicken_cuts()
 
 for i, c in enumerate(cuts):
     col = cols[i % 2]
@@ -90,22 +158,26 @@ for i, c in enumerate(cuts):
             min_value=0.0, max_value=200.0, value=50.0, step=5.0,
         )
 
-if st.button("📈 Calculate Retail Prices"):
-    retail_data, whole_price, total_value = wholesale_to_retail_custom_markups(
-        wholesale_price, markups, bird_weight
+# ==========================================================
+# 🔹 Run calculation
+# ==========================================================
+if st.button("📈 Calculate Retail Pricing"):
+    retail_data, whole_price, total_value = calculate_cut_prices(
+        wholesale_price, markups, weight_kg, cuts
     )
 
-    st.write(f"### Whole Chicken Retail Price (avg markup): ${whole_price:.2f}/kg")
-    st.write(f"### Total Retail Value for {bird_weight:.2f} kg Bird: ${total_value:.2f}")
+    st.write(f"### 🧾 Whole {species.capitalize()} Retail Price (avg markup): ${whole_price:.2f}/kg")
+    st.write(f"### 💰 Total Retail Value for {weight_kg:.2f} kg {species.capitalize()}: ${total_value:.2f}")
 
     st.caption("""
     **Column guide:**
-    - *Cut*: Chicken part  
-    - *Yield %*: Portion of total bird weight  
-    - *Markup %*: Desired profit margin for that cut  
-    - *Cut Weight (kg)*: Estimated cut weight based on total bird weight  
-    - *Retail Price ($/kg)*: Suggested retail selling price per kg  
-    - *Cut Value ($)*: Total retail value of that cut  
+    - *Cut*: Meat section  
+    - *Yield %*: Portion of total carcass weight  
+    - *Markup %*: Desired profit margin  
+    - *Cut Weight (kg)*: Estimated cut weight based on carcass size  
+    - *Retail Price ($/kg)*: Suggested retail selling price per kilogram  
+    - *Cut Value ($)*: Total retail value for that cut
     """)
 
-    st.table(retail_data)
+    df = pd.DataFrame(retail_data)
+    st.dataframe(df, use_container_width=True)
