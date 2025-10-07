@@ -12,36 +12,29 @@ def get_chicken_cuts():
         {"cut": "giblets", "percent": 1.5},
     ]
 
-# --- Calculation logic ---
+# --- New calculation logic (normalized yield model) ---
 def wholesale_to_retail_custom_markups(wholesale_per_kg: float, markups: dict):
-    """
-    Calculate per-cut retail price based on wholesale rate and individual markups.
-    """
     cuts = get_chicken_cuts()
-    total_percent = sum(c["percent"] for c in cuts)
+    total_yield = sum(c["percent"] for c in cuts)
+    avg_yield = total_yield / len(cuts)  # average % per cut
     retail_data = []
 
     for c in cuts:
         cut_name = c["cut"]
-        yield_fraction = c["percent"] / total_percent
-
-        # Approx cost distribution: each cut takes proportional share of bird
-        # (This can be refined later if you want cut-specific yield multipliers)
-        wholesale_equiv_cost = wholesale_per_kg / yield_fraction
-
-        # Apply markup for this cut
+        yield_pct = c["percent"]
         markup = markups.get(cut_name, 0)
-        retail_price = wholesale_equiv_cost * (1 + markup / 100)
+
+        # Normalized yield adjustment (prevents tiny cuts from blowing out)
+        retail_price = wholesale_per_kg * (1 + markup / 100) * (avg_yield / yield_pct)
 
         retail_data.append({
             "cut": cut_name,
-            "yield_%": c["percent"],
+            "yield_%": yield_pct,
             "markup_%": markup,
-            "wholesale_equiv_cost_per_kg": round(wholesale_equiv_cost, 2),
             "retail_price_per_kg": round(retail_price, 2),
         })
 
-    # Whole chicken retail price (simple markup average)
+    # Whole chicken retail = weighted average of markups
     avg_markup = sum(markups.values()) / len(markups) if markups else 0
     whole_retail = round(wholesale_per_kg * (1 + avg_markup / 100), 2)
 
@@ -49,13 +42,13 @@ def wholesale_to_retail_custom_markups(wholesale_per_kg: float, markups: dict):
 
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="Chicken Cut Retail Calculator", page_icon="🐔", layout="centered")
+st.set_page_config(page_title="Chicken Retail Calculator", page_icon="🐔", layout="centered")
 
 st.title("🐔 Chicken Wholesale → Retail Calculator")
 
 st.write("""
-Use this calculator to estimate **retail pricing per cut** based on your wholesale chicken cost.  
-You can set **custom markup percentages** for each cut and compare against the whole bird’s retail price.
+Use this calculator to estimate **realistic retail pricing per cut** based on your wholesale chicken cost.  
+Each cut can have its own **markup percentage**, and prices are normalized by yield so they stay proportional and realistic.
 """)
 
 # Inputs
@@ -91,8 +84,7 @@ if st.button("📈 Calculate Retail Prices"):
     - *Cut*: Chicken part  
     - *Yield %*: Portion of total bird weight  
     - *Markup %*: Desired profit margin for that cut  
-    - *Wholesale Equivalent Cost ($/kg)*: Effective cost per kg for that cut, based on the whole bird price  
-    - *Retail Price ($/kg)*: Suggested retail selling price for that cut
+    - *Retail Price ($/kg)*: Suggested retail selling price per kg, normalized by yield
     """)
 
     st.table(retail_data)
