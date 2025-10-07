@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import json
+import io
 
 # ==========================================================
 # 🔹 Base cut data for each species
@@ -44,7 +46,6 @@ DEFAULT_CUTS = {
     ],
 }
 
-
 # ==========================================================
 # 🔹 Calculation Logic
 # ==========================================================
@@ -78,8 +79,9 @@ def calculate_cut_prices(wholesale_per_kg, markups, weight_kg, cuts):
 
     avg_markup = sum(markups.values()) / len(markups) if markups else 0
     whole_retail_per_kg = round(wholesale_per_kg * (1 + avg_markup / 100), 2)
+    total_value = round(total_value, 2)
 
-    return results, whole_retail_per_kg, round(total_value, 2)
+    return results, whole_retail_per_kg, total_value
 
 
 # ==========================================================
@@ -87,17 +89,31 @@ def calculate_cut_prices(wholesale_per_kg, markups, weight_kg, cuts):
 # ==========================================================
 st.set_page_config(page_title="Butcher Yield Calculator", page_icon="🥩", layout="centered")
 
-st.title("🥩 Multi-Animal Butcher Yield & Retail Calculator")
+st.title("🥩 Multi-Animal Butcher Yield & Retail Calculator (Persistent)")
+
 st.write("""
-This tool helps you estimate retail prices per cut for **cow**, **chicken**, **lamb**, or **pig**,  
-based on wholesale cost, animal weight, and per-cut markup.  
-You can also edit cut names and yield % under *Properties* for each species.
+Estimate retail prices per cut for **cow**, **chicken**, **lamb**, or **pig**,  
+based on wholesale cost, carcass weight, and per-cut markup.  
+You can also **save and load** your settings and data as JSON files.
 """)
+
+# ==========================================================
+# 🔹 Load saved data if available
+# ==========================================================
+uploaded_file = st.file_uploader("📤 Load saved JSON configuration", type=["json"])
+loaded_data = None
+if uploaded_file:
+    try:
+        loaded_data = json.load(uploaded_file)
+        st.success(f"Loaded saved data for {loaded_data.get('species', '').capitalize()} successfully!")
+    except Exception as e:
+        st.error(f"Error loading file: {e}")
 
 # ==========================================================
 # 🔹 Animal selector
 # ==========================================================
 st.subheader("Select Animal")
+
 species_choice = st.radio(
     "Choose animal:",
     ["🐔 Chicken", "🐄 Cow", "🐑 Lamb", "🐖 Pig"],
@@ -120,7 +136,10 @@ elif "Pig" in species_choice:
 st.sidebar.header(f"⚙️ {species.capitalize()} Cut Properties")
 
 st.sidebar.write("Edit cut names and yield percentages below (total should roughly equal 100%).")
-cuts_df = pd.DataFrame(DEFAULT_CUTS[species])
+
+# Use loaded data if available
+cuts_source = loaded_data["cuts"] if loaded_data and loaded_data.get("species") == species else DEFAULT_CUTS[species]
+cuts_df = pd.DataFrame(cuts_source)
 
 edited_cuts = st.sidebar.data_editor(
     cuts_df,
@@ -129,7 +148,6 @@ edited_cuts = st.sidebar.data_editor(
     hide_index=True
 )
 
-# Convert sidebar edits back into dict
 cuts = edited_cuts.to_dict(orient="records")
 
 # ==========================================================
@@ -137,25 +155,34 @@ cuts = edited_cuts.to_dict(orient="records")
 # ==========================================================
 wholesale_price = st.number_input(
     "Wholesale price per kg ($)",
-    min_value=1.0, max_value=50.0, value=9.85, step=0.05,
+    min_value=1.0, max_value=50.0,
+    value=loaded_data.get("wholesale_price", 9.85) if loaded_data else 9.85,
+    step=0.05,
 )
 
 weight_kg = st.number_input(
     "Animal dressed weight (kg)",
-    min_value=0.5, max_value=1000.0, value=2.0, step=0.5,
-    help="The dressed carcass weight being broken down."
+    min_value=0.5, max_value=1000.0,
+    value=loaded_data.get("weight_kg", 2.0) if loaded_data else 2.0,
+    step=0.5,
 )
 
 st.subheader("Set markup percentage per cut")
+
 markups = {}
 cols = st.columns(2)
+
+# use loaded markups if available
+loaded_markups = loaded_data.get("markups", {}) if loaded_data else {}
 
 for i, c in enumerate(cuts):
     col = cols[i % 2]
     with col:
         markups[c["cut"]] = col.number_input(
             f"{c['cut']} markup (%)",
-            min_value=0.0, max_value=200.0, value=50.0, step=5.0,
+            min_value=0.0, max_value=200.0,
+            value=loaded_markups.get(c["cut"], 50.0),
+            step=5.0,
         )
 
 # ==========================================================
@@ -181,3 +208,38 @@ if st.button("📈 Calculate Retail Pricing"):
 
     df = pd.DataFrame(retail_data)
     st.dataframe(df, use_container_width=True)
+
+    # ==========================================================
+    # 🔹 Save all data to JSON
+    # ==========================================================
+    st.subheader("💾 Save or Export Your Data")
+
+    export_dict = {
+        "species": species,
+        "cuts": cuts,
+        "markups": markups,
+        "wholesale_price": wholesale_price,
+        "weight_kg": weight_kg,
+        "results": retail_data,
+        "whole_retail_price": whole_price,
+        "total_retail_value": total_value
+    }
+
+    buffer = io.BytesIO()
+    buffer.write(json.dumps(export_dict, indent=2).encode("utf-8"))
+
+    st.download_button(
+        label="⬇️ Download configuration as JSON",
+        data=buffer.getvalue(),
+        file_name=f"{species}_butcher_data.json",
+        mime="application/json",
+    )
+
+    # Optional: Export results as CSV
+    csv = df.to_csv(index=False)
+    st.download_button(
+        "📊 Export results as CSV",
+        csv,
+        f"{species}_results.csv",
+        "text/csv",
+    )
